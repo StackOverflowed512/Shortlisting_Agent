@@ -1,0 +1,10 @@
+requests
+python-dotenv
+pypdf2  # Or pdfplumber if you prefer and install it
+python-docx
+scikit-learn
+pandas
+# For Ollama, ensure it's installed and running separately.
+# Models like llama3 and nomic-embed-text should be pulled.
+# ollama pull llama3
+# ollama pull nomic-embed-text
