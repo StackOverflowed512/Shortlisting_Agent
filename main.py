@@ -134,60 +134,56 @@ def run_pipeline():
             db_manager.close()
             return
 
-        first_jd_series = jd_df.iloc[0]
-        jd_raw_text = str(first_jd_series[jd_text_col_to_use])
-        jd_title_from_csv = str(first_jd_series.get(jd_title_col_to_use, 'N/A Job Title')) # .get is safer for optional title
+        # Replace the single JD processing with iteration over all JDs
+        for index, jd_series in jd_df.iterrows():
+            logger.info(f"Processing Job Description {index + 1} of {len(jd_df)}")
+            
+            jd_raw_text = str(jd_series[jd_text_col_to_use])
+            jd_title_from_csv = str(jd_series.get(jd_title_col_to_use, 'N/A Job Title'))
 
-        logger.info(f"Processing Job Description: {jd_title_from_csv if jd_title_from_csv != 'N/A Job Title' else 'First JD in CSV'}")
+            logger.info(f"Processing Job Description: {jd_title_from_csv if jd_title_from_csv != 'N/A Job Title' else f'JD #{index + 1}'}")
 
-        summarization_result = jd_summarizer.summarize_jd(jd_raw_text, source_file=f"{JOB_DESCRIPTION_CSV} (row 0)")
+            summarization_result = jd_summarizer.summarize_jd(jd_raw_text, source_file=f"{JOB_DESCRIPTION_CSV} (row {index})")
 
-        if not summarization_result:
-            logger.error(f"Failed to summarize the job description. Skipping further processing for this JD.")
-            db_manager.add_log("MainPipeline", "ERROR", "JD summarization failed.")
-            db_manager.close()
-            return
+            if not summarization_result:
+                logger.error(f"Failed to summarize job description #{index + 1}. Skipping to next JD.")
+                db_manager.add_log("MainPipeline", "ERROR", f"JD summarization failed for row {index}")
+                continue
 
-        current_jd_id, jd_summary = summarization_result
-        job_title_from_summary = jd_summary.get("job_title", jd_title_from_csv)
-        logger.info(f"Job Description (ID: {current_jd_id}) summarized successfully: {job_title_from_summary}")
+            current_jd_id, jd_summary = summarization_result
+            job_title_from_summary = jd_summary.get("job_title", jd_title_from_csv)
+            logger.info(f"Job Description (ID: {current_jd_id}) summarized successfully: {job_title_from_summary}")
 
-        logger.info(f"Starting resume processing from directory: {RESUMES_DIR}")
-        if not os.path.exists(RESUMES_DIR) or not os.listdir(RESUMES_DIR):
-            logger.warning(f"Resumes directory {RESUMES_DIR} is empty or does not exist. Creating dummy resumes if needed.")
-            if not os.path.exists(RESUMES_DIR): os.makedirs(RESUMES_DIR)
-            if not os.listdir(RESUMES_DIR):
-                logger.info("Creating dummy resume files in data/CVs/ for demonstration.")
-                try:
-                    with open(os.path.join(RESUMES_DIR, "dummy_resume1.txt"), "w", encoding='utf-8') as f:
-                        f.write("Alice Wonderland, alice@example.com. Python, Django, 3 years experience. BS in CS.")
-                    with open(os.path.join(RESUMES_DIR, "dummy_resume2.txt"), "w", encoding='utf-8') as f:
-                        f.write("Bob The Builder, bob@example.com. Java, Spring, 5 years experience. MS in Software Engineering.")
-                    logger.warning("Created dummy .txt resumes. Please use PDF/DOCX for actual parsing.")
-                except Exception as e_dummy_resume:
-                    logger.error(f"Failed to create dummy resume files: {e_dummy_resume}")
+            # Process resumes for this JD
+            logger.info(f"Starting resume processing for JD ID: {current_jd_id}")
+            resume_matcher.process_resumes_for_jd(current_jd_id, jd_summary)
+            logger.info(f"Resume matching completed for JD ID: {current_jd_id}")
 
-        resume_matcher.process_resumes_for_jd(current_jd_id, jd_summary)
-        logger.info(f"Resume matching completed for JD ID: {current_jd_id}")
+            # Shortlist candidates for this JD
+            logger.info(f"Starting shortlisting for JD ID: {current_jd_id}")
+            shortlister.shortlist_candidates(current_jd_id)
+            logger.info(f"Shortlisting completed for JD ID: {current_jd_id}")
 
-        logger.info(f"Starting shortlisting for JD ID: {current_jd_id}")
-        shortlister.shortlist_candidates(current_jd_id)
-        logger.info(f"Shortlisting completed for JD ID: {current_jd_id}")
+            # Schedule interviews for this JD
+            logger.info(f"Starting interview scheduling for JD ID: {current_jd_id}")
+            scheduler.schedule_interviews(current_jd_id, job_title=job_title_from_summary)
+            logger.info(f"Interview scheduling process completed for JD ID: {current_jd_id}")
 
-        logger.info(f"Starting interview scheduling for JD ID: {current_jd_id}")
-        scheduler.schedule_interviews(current_jd_id, job_title=job_title_from_summary)
-        logger.info(f"Interview scheduling process completed for JD ID: {current_jd_id}")
+            # Display results for this JD
+            logger.info(f"Displaying final candidate statuses for JD ID: {current_jd_id}")
+            final_candidates = db_manager.get_all_candidates_for_jd(current_jd_id)
+            if final_candidates:
+                logger.info(f"{'='*20} Final Candidate Statuses for JD ID: {current_jd_id} ({job_title_from_summary}) {'='*20}")
+                for cand_data in final_candidates:
+                    cand_id, cand_name, cand_email, cand_score, cand_status, _, _ = cand_data[:7]
+                    logger.info(f"  - Name: {cand_name}, Email: {cand_email}, Score: {cand_score:.4f if cand_score is not None else 'N/A'}, Status: {cand_status}")
+                logger.info(f"{'='*70}")
+            else:
+                logger.info(f"No candidates processed or found for JD ID: {current_jd_id}")
 
-        logger.info("Displaying final candidate statuses for JD ID: %s", current_jd_id)
-        final_candidates = db_manager.get_all_candidates_for_jd(current_jd_id)
-        if final_candidates:
-            logger.info(f"{'='*20} Final Candidate Statuses for JD ID: {current_jd_id} ({job_title_from_summary}) {'='*20}")
-            for cand_data in final_candidates:
-                cand_id, cand_name, cand_email, cand_score, cand_status, _, _ = cand_data[:7]
-                logger.info(f"  - Name: {cand_name}, Email: {cand_email}, Score: {cand_score:.4f if cand_score is not None else 'N/A'}, Status: {cand_status}")
-            logger.info(f"{'='*70}")
-        else:
-            logger.info("No candidates processed or found for this JD.")
+            logger.info(f"Completed processing JD #{index + 1}\n")
+
+        logger.info(f"Completed processing all {len(jd_df)} job descriptions")
 
     except Exception as e:
         logger.error(f"An unexpected error occurred in the main pipeline: {e}", exc_info=True)
