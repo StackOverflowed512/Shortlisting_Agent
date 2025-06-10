@@ -176,7 +176,7 @@ def run_pipeline():
                 logger.info(f"{'='*20} Final Candidate Statuses for JD ID: {current_jd_id} ({job_title_from_summary}) {'='*20}")
                 for cand_data in final_candidates:
                     cand_id, cand_name, cand_email, cand_score, cand_status, _, _ = cand_data[:7]
-                    logger.info(f"  - Name: {cand_name}, Email: {cand_email}, Score: {cand_score:.4f if cand_score is not None else 'N/A'}, Status: {cand_status}")
+                    logger.info(f"  - Name: {cand_name}, Email: {cand_email}, Score: {cand_score if cand_score is None else f'{cand_score:.4f}'}, Status: {cand_status}")
                 logger.info(f"{'='*70}")
             else:
                 logger.info(f"No candidates processed or found for JD ID: {current_jd_id}")
